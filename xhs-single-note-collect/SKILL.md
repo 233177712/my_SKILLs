@@ -62,18 +62,18 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py
 ### 方式 B：命令行传参（适合重复运行）
 
 ```powershell
-python skills/xhs-single-note-collect/scripts/xhs_collect.py ^
-  --base-token <BASE_TOKEN> --table-id <TABLE_ID> --view-id <VIEW_ID> ^
-  --rows 26,27,28 ^
+python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+  --base-token <BASE_TOKEN> --table-id <TABLE_ID> --view-id <VIEW_ID> `
+  --rows 26,27,28 `
   --cookies-str "<COOKIES>"
 ```
 
 或使用 `--feishu-url` 替代三个独立参数：
 
 ```powershell
-python skills/xhs-single-note-collect/scripts/xhs_collect.py ^
-  --feishu-url "https://my.feishu.cn/base/TMsGbgncba7qdMsHpxfcO8dSnNf?table=tbltm1ucPvxmwHkA&view=vew5J9vzNJ" ^
-  --rows 28,29,30 ^
+python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+  --feishu-url "https://my.feishu.cn/base/TMsGbgncba7qdMsHpxfcO8dSnNf?table=tbltm1ucPvxmwHkA&view=vew5J9vzNJ" `
+  --rows 28,29,30 `
   --cookies-str "<COOKIES>"
 ```
 
@@ -98,6 +98,10 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py ^
 | `--cookies-file` | 否 | cookies 文本文件路径 |
 | `--skip-comments` | 否 | 跳过评论采集（更快） |
 | `--skip-media` | 否 | 跳过媒体下载上传（仅写文本） |
+| `--use-cache-only` | 否 | 仅使用缓存数据，不调用 XHS API |
+| `--writeback-only` | 否 | 跳过全部采集，仅回写已有缓存数据 |
+| `--skip-note-info` | 否 | 跳过 get_note_info（使用缓存） |
+| `--skip-user-info` | 否 | 跳过 get_user_info（使用缓存） |
 
 > 所有参数均为可选：不传参时自动进入交互模式逐个询问。
 
@@ -107,11 +111,48 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py ^
 # 保存 cookies 到文件
 @"abRequestId=...;a1=...;web_session=..."@ | Set-Content -Encoding UTF8 cookies.txt
 
-python skills/xhs-single-note-collect/scripts/xhs_collect.py ^
-  --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> ^
-  --rows 26,27,28 ^
+python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+  --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
+  --rows 26,27,28 `
   --cookies-file cookies.txt
 ```
+
+### 仅回写模式（已有缓存时跳过采集）
+
+```powershell
+python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+  --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
+  --rows 26,27,28 `
+  --cookies-file cookies.txt `
+  --use-cache-only
+```
+
+或者更细粒度控制：
+
+```powershell
+# 仅回写已有缓存，不碰采集链路
+python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+  --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
+  --rows 26,27,28 `
+  --cookies-file cookies.txt `
+  --writeback-only
+
+# 只跳过笔记信息采集（如补用户信息）
+python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+  --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
+  --rows 26,27,28 `
+  --cookies-file cookies.txt `
+  --skip-note-info
+
+# 只补笔记信息（跳过用户信息采集）
+python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+  --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
+  --rows 26,27,28 `
+  --cookies-file cookies.txt `
+  --skip-user-info
+```
+
+> **注意：** PowerShell 中跨行命令使用反引号 `` ` ``，不是 `^`（`^` 是 cmd.exe 的续行符）。
 
 ---
 
@@ -140,9 +181,9 @@ lark-cli auth login --domain base
 lark-cli base +field-list --base-token <BASE_TOKEN> --table-id <TABLE_ID> --as user
 ```
 
-如缺少字段（如「正文内容」）：
+如缺少字段（如「正文」）：
 ```powershell
-lark-cli base +field-create --base-token <BASE_TOKEN> --table-id <TABLE_ID> --json '{"name":"正文内容","type":"text","style":{"type":"plain"}}' --as user
+lark-cli base +field-create --base-token <BASE_TOKEN> --table-id <TABLE_ID> --json '{"name":"正文","type":"text","style":{"type":"plain"}}' --as user
 ```
 
 ### Step 2: 读取笔记链接
@@ -214,14 +255,15 @@ curl -L -o cover.jpg "<COVER_URL>"
 
 # 上传附件
 Set-Location <DOWNLOAD_DIR>
-lark-cli base +record-upload-attachment --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --field-id fldcVf4Wts --file ./cover.jpg --as user
-lark-cli base +record-upload-attachment --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --field-id fld0Jedx1P --file ./cover.jpg --as user
+lark-cli base +record-upload-attachment --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --field-id "图片附件" --file ./cover.jpg --as user
+lark-cli base +record-upload-attachment --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --field-id "正文图" --file ./body.jpg --as user
+lark-cli base +record-upload-attachment --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --field-id "视频附件" --file ./video.mp4 --as user
 
 # 回写字段
 lark-cli base +record-upsert --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --as user --json '{
   "作者名":"<VALUE>",
   "标题":"<VALUE>",
-  "正文内容":"<VALUE>",
+  "正文":"<VALUE>",
   "标签":"<VALUE>",
   "点赞数":<NUMBER>,
   "评论数":<NUMBER>,
@@ -231,8 +273,8 @@ lark-cli base +record-upsert --base-token <BASE_TOKEN> --table-id <TABLE_ID> --r
   "提取时间":"YYYY-MM-DD HH:mm:ss",
   "粉丝":<NUMBER>,
   "获赞与收藏":<NUMBER>,
-  "封面链接":"<URL>",
-  "视频下载链接":"<URL or empty>"
+  "图片链接":"<URL>",
+  "视频链接":"<URL or empty>"
 }'
 ```
 
@@ -247,7 +289,7 @@ lark-cli base +record-upsert --base-token <BASE_TOKEN> --table-id <TABLE_ID> --r
 | 3 | GBK 编码报错 | 评论含 emoji 时 `UnicodeEncodeError` | 永远用 `--out` 写文件；或设 `$env:PYTHONIOENCODING='utf-8'`；或使用编排脚本 |
 | 4 | lark-cli `--file` 路径限制 | 不接受绝对路径 | 用相对路径 `./file`，或编排脚本自动处理 |
 | 5 | `+record-upsert` JSON 结构 | 误套 `{"field_values":{...}}` 外层 | 直接 `{"字段名": 值}` |
-| 6 | 缺少字段 | 表中无「正文内容」字段 | `+field-list` 先比对，缺失则 `+field-create` |
+| 6 | 缺少字段 | 表中无「正文」字段 | `+field-list` 先比对，缺失则 `+field-create` |
 | 7 | 编码地狱 | ANSI 转义码 + UTF-8 内容 + GBK 终端 | 用 `Out-File -Encoding UTF8` 存文件，用 Python 读取；编排脚本自动处理 |
 | 8 | 记录列表截断 | `+record-list` 因单条记录内容过大被截断 | `Out-File -Width 9999`；编排脚本内部处理 |
 | 9 | 重复笔记 | 多行指向同一条笔记 | 编排脚本自动按 note_id 去重，节省速率等待时间 |
@@ -263,7 +305,7 @@ lark-cli base +record-upsert --base-token <BASE_TOKEN> --table-id <TABLE_ID> --r
 |----------|--------|------|----------|
 | 作者名 | 作者名 | text | `note_card.user.nickname` |
 | 标题 | 标题 | text | `note_card.title` |
-| 正文内容 | 正文内容 | text | `note_card.desc` |
+| 正文 | 正文 | text | `note_card.desc` |
 | 标签 | 标签 | text | `tag_list[].name` (逗号拼接) |
 | 点赞数 | 点赞数 | number | `interact_info.liked_count` (去单位) |
 | 评论数 | 评论数 | number | `interact_info.comment_count` |
@@ -273,19 +315,20 @@ lark-cli base +record-upsert --base-token <BASE_TOKEN> --table-id <TABLE_ID> --r
 | 提取时间 | 提取时间 | datetime | 当前时间 |
 | 粉丝 | 粉丝 | number | `interactions[type=fans].count` |
 | 获赞与收藏 | 获赞与收藏 | number | `interactions[type=interaction].count` |
-| 封面链接 | 封面链接 | text | 首选 `image_list[0].info_list[scene=WB_DFT].url` |
-| 视频下载链接 | 视频下载链接 | text | `get_note_no_water_video(note_id)` (仅视频笔记) |
-| 正文图/笔记视频 | (附件上传) | attachment | 下载 `image_list[0]` 后上传 |
-| 封面图片 | (附件上传) | attachment | 下载封面 URL 后上传 |
+| 图片链接 | 图片链接 | text | 首选 `image_list[0].info_list[scene=WB_DFT].url` |
+| 视频链接 | 视频链接 | text | `get_note_no_water_video(note_id)` (仅视频笔记) |
+| 正文图 | 正文图 | attachment | 下载 `image_list[1:]` 后逐张上传（不含封面） |
+| 视频附件 | 视频附件 | attachment | 下载视频后上传（仅视频笔记） |
+| 图片附件 | 图片附件 | attachment | 下载封面 URL 后上传 |
 
 ## 视频笔记分支
 
 如果是视频笔记（`type=video`），编排脚本自动处理：
 
 ```powershell
-python skills/xhs-single-note-collect/scripts/xhs_collect.py ^
-  --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> ^
-  --rows 26 ^
+python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+  --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
+  --rows 26 `
   --cookies-str "<COOKIES>"
 ```
 
@@ -295,5 +338,5 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py ^
 ```powershell
 python xhs_api_tool.py call pc get_note_no_water_video --params '{"note_id":"<NOTE_ID>"}'
 curl -L -o note_video.mp4 "<VIDEO_URL>"
-lark-cli base +record-upload-attachment --base-token <TOKEN> --table-id <TBL> --record-id <REC> --field-id fld0Jedx1P --file ./note_video.mp4 --as user
+lark-cli base +record-upload-attachment --base-token <TOKEN> --table-id <TBL> --record-id <REC> --field-id "视频附件" --file ./note_video.mp4 --as user
 ```

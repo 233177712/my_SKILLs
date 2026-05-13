@@ -2,16 +2,22 @@
 """
 xhs_collect.py — One-shot workflow: Feishu Base → xhs-apis → write-back.
 
-Usage:
-  python xhs_collect.py \
-    --base-token <TOKEN> --table-id <TABLE> --view-id <VIEW> \
-    --rows 26,27,28 \
+Usage (PowerShell, multi-line with backtick):
+  python xhs_collect.py `
+    --base-token <TOKEN> --table-id <TABLE> --view-id <VIEW> `
+    --rows 26,27,28 `
     --cookies-str "<COOKIES>"
 
-  python xhs_collect.py \
-    --base-token <TOKEN> --table-id <TABLE> --view-id <VIEW> \
-    --rows 26,27,28 \
+  python xhs_collect.py `
+    --base-token <TOKEN> --table-id <TABLE> --view-id <VIEW> `
+    --rows 26,27,28 `
     --cookies-file cookies.txt
+
+Cache/writeback modes:
+  python xhs_collect.py ... --use-cache-only   # no XHS API calls, cache only
+  python xhs_collect.py ... --writeback-only   # skip collection, only write cached
+  python xhs_collect.py ... --skip-note-info   # skip get_note_info
+  python xhs_collect.py ... --skip-user-info   # skip get_user_info
 """
 
 import argparse
@@ -31,6 +37,9 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 XHS_API_TOOL = SKILL_DIR.parent / "xhs-apis" / "scripts" / "xhs_api_tool.py"
 WORK_DIR = Path.cwd()
 CACHE_DIR = WORK_DIR / ".xhs_cache"
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 def _strip_ansi(text: str) -> str:
@@ -75,49 +84,133 @@ def _larkcli(*args: str) -> str:
     return _strip_ansi(proc.stdout + proc.stderr)
 
 
-def _parse_record_list(output: str):
+def _larkcli_json(*args: str) -> dict:
+    cmd = _larkcli_cmd(*args, "--format", "json")
+    proc = _run(cmd)
+    if proc.returncode != 0:
+        print(f"[ERROR] lark-cli failed: {' '.join(cmd)}", file=sys.stderr)
+        print(proc.stderr, file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        return json.loads(_strip_ansi(proc.stdout + proc.stderr))
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] JSON decode failed: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def _get_field_list(base_token: str, table_id: str) -> list:
+    cmd = _larkcli_cmd("base", "+field-list",
+                        "--base-token", base_token,
+                        "--table-id", table_id,
+                        "--limit", "200",
+                        "--as", "user",
+                        "--jq", ".")
+    proc = _run(cmd)
+    if proc.returncode != 0:
+        print(f"[ERROR] lark-cli +field-list failed", file=sys.stderr)
+        print(proc.stderr, file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        result = json.loads(_strip_ansi(proc.stdout + proc.stderr))
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] JSON decode failed: {e}", file=sys.stderr)
+        raise SystemExit(1)
+    return result.get("data", {}).get("fields", [])
+
+
+def _build_field_id_map(base_token: str, table_id: str) -> dict:
+    fields = _get_field_list(base_token, table_id)
+    return {f["name"]: f["id"] for f in fields}
+
+
+def _get_record_list(base_token: str, table_id: str, view_id: str, limit: int = 200) -> list:
+    result = _larkcli_json(
+        "base", "+record-list",
+        "--base-token", base_token,
+        "--table-id", table_id,
+        "--view-id", view_id,
+        "--limit", str(limit),
+        "--as", "user",
+    )
+    data = result.get("data", {})
+    field_ids = data.get("field_id_list", [])
+    field_names = data.get("fields", [])
+    rows = data.get("data", [])
+    record_ids = data.get("record_id_list", [])
+    link_field_idx = None
+    for idx, name in enumerate(field_names):
+        if name == "小红书链接":
+            link_field_idx = idx
+            break
     records = []
-    for line in output.splitlines():
-        line = line.strip()
-        if not line.startswith("| recv"):
+    for i, row in enumerate(rows):
+        if not row:
             continue
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) < 3:
-            continue
-        record_id = parts[1]
-        url = ""
-        url_field = parts[2]
-        m = re.search(r'\]\(([^)]+)\)', url_field)
-        if m:
-            url = m.group(1)
-        records.append({"record_id": record_id, "url": url})
+        rec = {"record_id": record_ids[i] if i < len(record_ids) else "", "url": ""}
+        if field_ids:
+            rec["field_ids"] = field_ids
+        if field_names:
+            rec["field_names"] = field_names
+        if link_field_idx is not None and link_field_idx < len(row):
+            url_val = row[link_field_idx]
+            if isinstance(url_val, str):
+                m = re.search(r'\]\(([^)]+)\)', url_val)
+                if m:
+                    rec["url"] = m.group(1)
+                else:
+                    rec["url"] = url_val
+        records.append(rec)
     return records
 
 
-def _parse_record_get(output: str):
-    fields = {}
-    for line in output.splitlines():
-        line = line.strip()
-        m = re.match(r'^- `(.+?)`:\s*(.*)', line)
-        if m:
-            name = m.group(1)
-            value = m.group(2).strip()
-            url_m = re.search(r'\]\(([^)]+)\)', value)
-            if url_m:
-                value = url_m.group(1)
-            fields[name] = value
-    return fields
-
-
-def _get_record_url(base_token: str, table_id: str, record_id: str) -> str:
-    output = _larkcli(
+def _get_record_fields(base_token: str, table_id: str, record_id: str) -> dict:
+    result = _larkcli_json(
         "base", "+record-get",
         "--base-token", base_token,
         "--table-id", table_id,
         "--record-id", record_id,
         "--as", "user",
     )
-    fields = _parse_record_get(output)
+    data = result.get("data", {})
+    field_ids = data.get("field_id_list", [])
+    field_names = data.get("fields", [])
+    rows = data.get("data", [])
+    if not rows or not rows[0]:
+        return {}
+    row = rows[0]
+    fields = {}
+    for idx, name in enumerate(field_names):
+        if idx < len(row):
+            val = row[idx]
+            if isinstance(val, str):
+                m = re.search(r'\]\(([^)]+)\)', val)
+                if m:
+                    val = m.group(1)
+            fields[name] = val
+            if field_ids and idx < len(field_ids):
+                fields[field_ids[idx]] = val
+    return fields
+
+
+def _count_attachments(fields: dict, field_name: str) -> int:
+    val = fields.get(field_name)
+    if val is None:
+        return 0
+    if isinstance(val, list):
+        return len(val)
+    s = str(val).strip()
+    if s in ("", "[]", "null", "None"):
+        return 0
+    return 1
+
+
+def _field_has_value(fields: dict, field_name: str) -> bool:
+    value = str(fields.get(field_name, "")).strip()
+    return value not in ("", "[]", "null", "None")
+
+
+def _get_record_url(base_token: str, table_id: str, record_id: str) -> str:
+    fields = _get_record_fields(base_token, table_id, record_id)
     for key in ("小红书链接",):
         if key in fields:
             return fields[key]
@@ -192,6 +285,8 @@ def _call_xhs_api(method: str, params: dict, tag: str, cache_key: str = ""):
     if out_file.exists():
         try:
             data = json.loads(out_file.read_text(encoding="utf-8"))
+            if cache_key:
+                _save_cache(cache_key, method, data)
             return data
         except (json.JSONDecodeError, OSError) as e:
             print(f"[WARN] Could not read {out_file}: {e}", file=sys.stderr)
@@ -231,7 +326,13 @@ def _extract_note_data(api_result: dict) -> dict | None:
     note_id = card.get("note_id", "")
     note_type = card.get("type", "normal")
     desc = card.get("desc", "")
-    title = card.get("title", "")
+    title = card.get("title", "").strip()
+    if not title:
+        first_sentence = re.split(r'[。！？.!?\n]', desc)[0].strip()
+        if first_sentence:
+            title = first_sentence
+        else:
+            title = desc[:15]
     user = card.get("user", {})
     user_id = user.get("user_id", "")
     nickname = user.get("nickname", "")
@@ -293,6 +394,16 @@ def _extract_user_data(api_result: dict) -> dict | None:
     return {"fans": fans, "interaction": interaction}
 
 
+def _extract_video_download_url(api_result: dict) -> str:
+    try:
+        result_list = api_result.get("result", [])
+        if len(result_list) < 3 or not result_list[0]:
+            return ""
+        return result_list[2] or ""
+    except (IndexError, KeyError, TypeError):
+        return ""
+
+
 def _download_file(url: str, dest: Path) -> bool:
     try:
         proc = _run(["curl", "-L", "-o", str(dest), url], timeout=120)
@@ -303,7 +414,8 @@ def _download_file(url: str, dest: Path) -> bool:
 
 
 def _upload_attachment(base_token: str, table_id: str, record_id: str,
-                       field_id: str, file_path: Path) -> bool:
+                       field_name: str, file_path: Path) -> bool:
+    field_id = _get_field_id(field_name)
     proc = _run(
         _larkcli_cmd("base", "+record-upload-attachment",
          "--base-token", base_token,
@@ -315,8 +427,14 @@ def _upload_attachment(base_token: str, table_id: str, record_id: str,
         cwd=file_path.parent,
     )
     if proc.returncode != 0:
-        print(f"[WARN] Upload failed for {record_id} field {field_id}", file=sys.stderr)
-        print(proc.stderr, file=sys.stderr)
+        stderr = proc.stderr or ""
+        if "MOBILE_ONLY" in stderr or "仅可通过移动端拍摄上传" in stderr:
+            print(f"[ERROR] Field '{field_name}' ({field_id}) is MOBILE_ONLY", file=sys.stderr)
+            print(f"        Please toggle off this setting in Feishu UI:", file=sys.stderr)
+            print(f"        Field Settings > Advanced > Remove '仅可通过移动端拍摄上传'", file=sys.stderr)
+        else:
+            print(f"[WARN] Upload failed for {record_id} field {field_name}", file=sys.stderr)
+            print(stderr, file=sys.stderr)
         return False
     return True
 
@@ -332,23 +450,40 @@ def _get_best_image_url(image_list: list, index: int = 0) -> str:
     return img.get("url_default", "")
 
 
+def _download_body_images(note_data: dict, temp_dir: Path) -> list[Path]:
+    body_paths = []
+    for idx in range(1, len(note_data.get("image_list", []))):
+        img_url = _get_best_image_url(note_data["image_list"], idx)
+        if not img_url:
+            continue
+        body_path = temp_dir / f"body_{note_data['note_id'][:12]}_{idx}.jpg"
+        if _download_file(img_url, body_path):
+            body_paths.append(body_path)
+            print(f"  → Downloaded body image: {body_path.name}", file=sys.stderr)
+    return body_paths
+
+
 def _writeback_fields(base_token: str, table_id: str, record_id: str,
                       data: dict, now_str: str):
+    video_download_url = data.get("video_download_url", "")
+    if not video_download_url and data.get("type") != "video":
+        video_download_url = "不涉及"
+
     upsert = {
-        "作者名": data.get("nickname", ""),
-        "标题": data.get("title", ""),
-        "正文": data.get("desc", ""),
-        "标签": data.get("tags", ""),
-        "点赞数": data.get("liked_count", -1),
-        "评论数": data.get("comment_count", -1),
-        "分享数": data.get("share_count", -1),
-        "收藏数": data.get("collected_count", -1),
-        "发布时间": data.get("publish_time", ""),
-        "提取时间": now_str,
-        "粉丝": data.get("fans", -1),
-        "获赞与收藏": data.get("interaction", -1),
-        "封面链接": data.get("cover_url", ""),
-        "视频下载链接": "",
+        _get_field_id("作者名"): data.get("nickname", ""),
+        _get_field_id("标题"): data.get("title", ""),
+        _get_field_id("正文"): data.get("desc", ""),
+        _get_field_id("标签"): data.get("tags", ""),
+        _get_field_id("点赞数"): data.get("liked_count", -1),
+        _get_field_id("评论数"): data.get("comment_count", -1),
+        _get_field_id("分享数"): data.get("share_count", -1),
+        _get_field_id("收藏数"): data.get("collected_count", -1),
+        _get_field_id("发布时间"): data.get("publish_time", ""),
+        _get_field_id("提取时间"): now_str,
+        _get_field_id("粉丝"): data.get("fans", -1),
+        _get_field_id("获赞与收藏"): data.get("interaction", -1),
+        _get_field_id("图片链接"): data.get("cover_url", ""),
+        _get_field_id("视频链接"): video_download_url,
     }
     upsert = {k: v for k, v in upsert.items() if v != -1}
 
@@ -466,8 +601,16 @@ def _interactive_prompt():
     return base_token, table_id, view_id, rows, cookies
 
 
-COVER_FIELD_ID = "fldcVf4Wts"
-MEDIA_FIELD_ID = "fld0Jedx1P"
+FIELD_ID_MAP: dict = {}
+
+
+def _init_field_ids(base_token: str, table_id: str):
+    global FIELD_ID_MAP
+    FIELD_ID_MAP = _build_field_id_map(base_token, table_id)
+
+
+def _get_field_id(name: str) -> str:
+    return FIELD_ID_MAP.get(name, name)
 
 
 def main():
@@ -494,7 +637,24 @@ def main():
                         help="Skip comment collection (faster)")
     parser.add_argument("--skip-media", action="store_true",
                         help="Skip media download+upload (text only)")
+    parser.add_argument("--use-cache-only", action="store_true",
+                        help="Use only cached data, never call XHS API")
+    parser.add_argument("--writeback-only", action="store_true",
+                        help="Skip all collection, only write cached data to Feishu")
+    parser.add_argument("--skip-note-info", action="store_true",
+                        help="Skip get_note_info (use cache)")
+    parser.add_argument("--skip-user-info", action="store_true",
+                        help="Skip get_user_info (use cache)")
     args = parser.parse_args()
+
+    if args.use_cache_only:
+        args.skip_note_info = True
+        args.skip_user_info = True
+    if args.writeback_only:
+        args.skip_note_info = True
+        args.skip_user_info = True
+        args.skip_comments = True
+        args.skip_media = True
 
     # ── Pre-step: interactive prompt if required params missing ──
     has_cli_args = args.base_token and args.table_id and args.view_id and args.rows
@@ -541,16 +701,12 @@ def main():
         for f in CACHE_DIR.glob("result_*.json"):
             f.unlink(missing_ok=True)
 
+    print("[1/6] Initializing field ID map...", file=sys.stderr)
+    _init_field_ids(args.base_token, args.table_id)
+    print(f"  → {len(FIELD_ID_MAP)} fields loaded", file=sys.stderr)
+
     print("[1/6] Reading Feishu record list...", file=sys.stderr)
-    output = _larkcli(
-        "base", "+record-list",
-        "--base-token", args.base_token,
-        "--table-id", args.table_id,
-        "--view-id", args.view_id,
-        "--limit", "200",
-        "--as", "user",
-    )
-    all_records = _parse_record_list(output)
+    all_records = _get_record_list(args.base_token, args.table_id, args.view_id)
     print(f"  → {len(all_records)} records in view", file=sys.stderr)
 
     if args.record_ids:
@@ -598,16 +754,23 @@ def main():
 
         print(f"\n[3/6-{idx}/{total_unique}] Collecting note: {note_id} ({','.join(note['record_ids'])})", file=sys.stderr)
 
-        print(f"  → get_note_info (may wait 60-120s for rate limit)...", file=sys.stderr)
         params = {"url": note["note_url"], "cookies_str": cookies}
-        note_result = _call_xhs_api("get_note_info", params, f"{tag}_info", cache_key=note_id)
-        if note_result is None:
-            print(f"  [SKIP] get_note_info failed, skipping note", file=sys.stderr)
+        note_data = _load_cache(note_id, "note_data")
+        if note_data:
+            print(f"  (cached) note_data", file=sys.stderr)
+        elif args.skip_note_info:
+            print(f"  [SKIP] --skip-note-info and no cache, skipping", file=sys.stderr)
             continue
-        note_data = _extract_note_data(note_result)
-        if note_data is None:
-            print(f"  [SKIP] Could not parse note data, skipping", file=sys.stderr)
-            continue
+        else:
+            print(f"  → get_note_info (may wait 60-120s for rate limit)...", file=sys.stderr)
+            note_result = _call_xhs_api("get_note_info", params, f"{tag}_info", cache_key=note_id)
+            if note_result is None:
+                print(f"  [SKIP] get_note_info failed, skipping note", file=sys.stderr)
+                continue
+            note_data = _extract_note_data(note_result)
+            if note_data is None:
+                print(f"  [SKIP] Could not parse note data, skipping", file=sys.stderr)
+                continue
         note["note_data"] = note_data
         print(f"  → {note_data['nickname']}: {note_data['title'][:40]}...", file=sys.stderr)
         print(f"    likes={note_data['liked_count']} collects={note_data['collected_count']} comments={note_data['comment_count']} shares={note_data['share_count']}", file=sys.stderr)
@@ -615,21 +778,49 @@ def main():
         # Save cache for resume
         _save_cache(note_id, "note_data", note_data)
 
-        print(f"  → get_user_info...", file=sys.stderr)
         if note_data["user_id"]:
-            user_params = {"user_id": note_data["user_id"], "cookies_str": cookies}
-            user_result = _call_xhs_api("get_user_info", user_params, f"{tag}_user", cache_key=note_id)
-            if user_result:
-                user_data = _extract_user_data(user_result)
-                if user_data:
-                    note["user_data"] = user_data
-                    _save_cache(note_id, "user_data", user_data)
-                    print(f"    fans={user_data['fans']} interaction={user_data['interaction']}", file=sys.stderr)
+            user_data = _load_cache(note_id, "user_data")
+            if user_data:
+                print(f"  (cached) user_data", file=sys.stderr)
+                note["user_data"] = user_data
+                print(f"    fans={user_data['fans']} interaction={user_data['interaction']}", file=sys.stderr)
+            elif not args.skip_user_info:
+                print(f"  → get_user_info...", file=sys.stderr)
+                user_params = {"user_id": note_data["user_id"], "cookies_str": cookies}
+                user_result = _call_xhs_api("get_user_info", user_params, f"{tag}_user", cache_key=note_id)
+                if user_result:
+                    user_data = _extract_user_data(user_result)
+                    if user_data:
+                        note["user_data"] = user_data
+                        _save_cache(note_id, "user_data", user_data)
+                        print(f"    fans={user_data['fans']} interaction={user_data['interaction']}", file=sys.stderr)
 
         if not args.skip_comments:
-            print(f"  → get_note_all_comment...", file=sys.stderr)
-            _call_xhs_api("get_note_all_comment", params, f"{tag}_comment", cache_key=note_id)
-            print(f"    (comments saved, not written to table)", file=sys.stderr)
+            if _load_cache(note_id, "comments_done"):
+                print(f"  (cached) comments", file=sys.stderr)
+            else:
+                print(f"  → get_note_all_comment...", file=sys.stderr)
+                _call_xhs_api("get_note_all_comment", params, f"{tag}_comment", cache_key=note_id)
+                _save_cache(note_id, "comments_done", {"done": True})
+                print(f"    (comments saved, not written to table)", file=sys.stderr)
+
+        if note_data.get("type") == "video":
+            if note_data.get("video_download_url"):
+                print(f"  (cached) video url", file=sys.stderr)
+            else:
+                print(f"  → get_note_no_water_video...", file=sys.stderr)
+                video_result = _call_xhs_api(
+                    "get_note_no_water_video",
+                    {"note_id": note_id},
+                    f"{tag}_video",
+                    cache_key=note_id,
+                )
+                if video_result:
+                    video_download_url = _extract_video_download_url(video_result)
+                    if video_download_url:
+                        note_data["video_download_url"] = video_download_url
+                        _save_cache(note_id, "note_data", note_data)
+                        print(f"    video url ready", file=sys.stderr)
 
     print(f"\n[6/6] Writing back to Feishu...", file=sys.stderr)
 
@@ -656,7 +847,8 @@ def main():
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         cover_path = None
-        media_path = None
+        body_image_paths = []
+        video_path = None
 
         if not args.skip_media:
             cover_url = note_data.get("cover_url", "")
@@ -667,26 +859,45 @@ def main():
                 else:
                     cover_path = None
 
-            img_list = note_data.get("image_list", [])
-            img_url = _get_best_image_url(img_list, 0)
-            if img_url and img_url != cover_url:
-                media_path = temp_dir / f"media_{note_data['note_id'][:12]}.jpg"
-                if _download_file(img_url, media_path):
-                    print(f"  → Downloaded media: {media_path.name}", file=sys.stderr)
-                else:
-                    media_path = None
-            elif cover_path and cover_path.exists():
-                media_path = cover_path
+            if note_data.get("type") == "video":
+                video_download_url = note_data.get("video_download_url", "")
+                if video_download_url:
+                    video_path = temp_dir / f"video_{note_data['note_id'][:12]}.mp4"
+                    if _download_file(video_download_url, video_path):
+                        print(f"  → Downloaded video: {video_path.name}", file=sys.stderr)
+                    else:
+                        video_path = None
+            else:
+                body_image_paths = _download_body_images(note_data, temp_dir)
 
         for rid in note["record_ids"]:
             print(f"  → Writing {rid}...", file=sys.stderr)
+            record_fields = _get_record_fields(args.base_token, args.table_id, rid)
 
             if cover_path and not args.skip_media:
-                _upload_attachment(args.base_token, args.table_id, rid,
-                                   COVER_FIELD_ID, cover_path)
-            if media_path and not args.skip_media:
-                _upload_attachment(args.base_token, args.table_id, rid,
-                                   MEDIA_FIELD_ID, media_path)
+                existing_cover = _count_attachments(record_fields, "图片附件")
+                if existing_cover == 0:
+                    _upload_attachment(args.base_token, args.table_id, rid,
+                                       "图片附件", cover_path)
+                else:
+                    print(f"    cover already present ({existing_cover} file(s)), skipping", file=sys.stderr)
+            if not args.skip_media:
+                expected_body = len(body_image_paths)
+                if expected_body > 0:
+                    existing_body = _count_attachments(record_fields, "正文图")
+                    if existing_body < expected_body:
+                        for body_image_path in body_image_paths:
+                            _upload_attachment(args.base_token, args.table_id, rid,
+                                               "正文图", body_image_path)
+                    else:
+                        print(f"    body images already complete ({existing_body}, expected {expected_body}), skipping", file=sys.stderr)
+                if video_path:
+                    existing_video = _count_attachments(record_fields, "视频附件")
+                    if existing_video == 0:
+                        _upload_attachment(args.base_token, args.table_id, rid,
+                                           "视频附件", video_path)
+                    else:
+                        print(f"    video already present ({existing_video} file(s)), skipping", file=sys.stderr)
 
             _writeback_fields(args.base_token, args.table_id, rid,
                               note_data, now_str)
@@ -719,7 +930,11 @@ def main():
             for note in unique_notes
         ],
     }
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    summary_json = json.dumps(summary, ensure_ascii=False, indent=2)
+    try:
+        print(summary_json)
+    except UnicodeEncodeError:
+        print(json.dumps(summary, ensure_ascii=True, indent=2))
 
 
 if __name__ == "__main__":
