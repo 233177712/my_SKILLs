@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# env / secrets
+.env
+.env.*
+
+# logs
+*.log
+
+# generated test outputs
+xhs-apis/scripts/*_result.json
+xhs-apis/scripts/payload_*.json
