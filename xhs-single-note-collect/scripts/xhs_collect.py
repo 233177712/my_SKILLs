@@ -316,6 +316,7 @@ def _upload_attachment(base_token: str, table_id: str, record_id: str,
     )
     if proc.returncode != 0:
         print(f"[WARN] Upload failed for {record_id} field {field_id}", file=sys.stderr)
+        print(proc.stderr, file=sys.stderr)
         return False
     return True
 
@@ -336,7 +337,7 @@ def _writeback_fields(base_token: str, table_id: str, record_id: str,
     upsert = {
         "作者名": data.get("nickname", ""),
         "标题": data.get("title", ""),
-        "正文内容": data.get("desc", ""),
+        "正文": data.get("desc", ""),
         "标签": data.get("tags", ""),
         "点赞数": data.get("liked_count", -1),
         "评论数": data.get("comment_count", -1),
@@ -362,6 +363,7 @@ def _writeback_fields(base_token: str, table_id: str, record_id: str,
     )
     if proc.returncode != 0:
         print(f"[WARN] Write-back failed for {record_id}", file=sys.stderr)
+        print(proc.stderr, file=sys.stderr)
         return False
     return True
 
