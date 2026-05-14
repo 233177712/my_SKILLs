@@ -670,7 +670,7 @@ def main():
         raise SystemExit(1)
 
     cookies = _resolve_cookies(args)
-    if not cookies:
+    if not cookies and not args.writeback_only:
         print("[ERROR] 必须提供 cookies (--cookies-str 或 --cookies-file)", file=sys.stderr)
         raise SystemExit(1)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -682,11 +682,11 @@ def main():
         for f in CACHE_DIR.glob("result_*.json"):
             f.unlink(missing_ok=True)
 
-    print("[1/6] Initializing field ID map...", file=sys.stderr)
+    print("[0/4] Initializing field ID map...", file=sys.stderr)
     _init_field_ids(args.base_token, args.table_id)
     print(f"  → {len(FIELD_ID_MAP)} fields loaded", file=sys.stderr)
 
-    print("[1/6] Reading Feishu record list...", file=sys.stderr)
+    print("[1/4] Reading Feishu record list...", file=sys.stderr)
     all_records = _get_record_list(args.base_token, args.table_id, args.view_id)
     print(f"  → {len(all_records)} records in view", file=sys.stderr)
 
@@ -702,13 +702,23 @@ def main():
                 print(f"[ERROR] Row {rn} out of range (1-{len(all_records)})", file=sys.stderr)
                 raise SystemExit(1)
 
-    print("[2/6] Fetching note URLs...", file=sys.stderr)
-    target_records = []
-    for rid in target_ids:
-        url = _get_record_url(args.base_token, args.table_id, rid)
-        note_id = _extract_note_id(url)
-        target_records.append({"record_id": rid, "url": url, "note_id": note_id})
-        print(f"  → {rid}: {note_id or url[:50]}...", file=sys.stderr)
+    if args.writeback_only:
+        print("[2/4] Mapping record IDs to note IDs from view data...", file=sys.stderr)
+        url_by_rid = {r["record_id"]: r.get("url", "") for r in all_records}
+        target_records = []
+        for rid in target_ids:
+            url = url_by_rid.get(rid, "")
+            note_id = _extract_note_id(url) if url else rid
+            target_records.append({"record_id": rid, "url": url, "note_id": note_id})
+            print(f"  → {rid}: {note_id or url[:50]}...", file=sys.stderr)
+    else:
+        print("[2/4] Fetching note URLs...", file=sys.stderr)
+        target_records = []
+        for rid in target_ids:
+            url = _get_record_url(args.base_token, args.table_id, rid)
+            note_id = _extract_note_id(url)
+            target_records.append({"record_id": rid, "url": url, "note_id": note_id})
+            print(f"  → {rid}: {note_id or url[:50]}...", file=sys.stderr)
 
     seen_notes = {}
     for rec in target_records:
@@ -733,7 +743,7 @@ def main():
         note_id = _extract_note_id(note["note_url"])
         tag = note_id[:12] if note_id else f"note{idx}"
 
-        print(f"\n[3/6-{idx}/{total_unique}] Collecting note: {note_id} ({','.join(note['record_ids'])})", file=sys.stderr)
+        print(f"\n[3/4-{idx}/{total_unique}] Collecting note: {note_id} ({','.join(note['record_ids'])})", file=sys.stderr)
 
         params = {"url": note["note_url"], "cookies_str": cookies}
         note_data = _load_cache(note_id, "note_data")
@@ -803,7 +813,7 @@ def main():
                         _save_cache(note_id, "note_data", note_data)
                         print(f"    video url ready", file=sys.stderr)
 
-    print(f"\n[6/6] Writing back to Feishu...", file=sys.stderr)
+    print(f"\n[4/4] Writing back to Feishu...", file=sys.stderr)
 
     for idx, note in enumerate(unique_notes, 1):
         note_data = note.get("note_data")

@@ -39,7 +39,7 @@ description: "采集小红书单条笔记的全链路数据（正文、媒体、
 
 ```powershell
 # 检查 Python 依赖（已安装则跳过）
-pip list --format=columns 2>$null | Select-String "requests|loguru" >$null 2>$null
+pip show requests loguru 2>$null
 if ($LASTEXITCODE -ne 0) { pip install -r skills/xhs-apis/scripts/requirements.txt }
 
 # 检查 Node 依赖（已安装则跳过）
@@ -164,7 +164,7 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py `
 
 ```powershell
 # 检查 Python 依赖（已安装则跳过）
-pip list --format=columns 2>$null | Select-String "requests|loguru" >$null 2>$null
+pip show requests loguru 2>$null
 if ($LASTEXITCODE -ne 0) { pip install -r skills/xhs-apis/scripts/requirements.txt }
 
 # 检查 Node 依赖（已安装则跳过）
