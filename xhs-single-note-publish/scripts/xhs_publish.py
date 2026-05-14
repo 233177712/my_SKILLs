@@ -244,6 +244,16 @@ def main():
         print(f"  [SKIP] Status '{publish_status}' not eligible for publishing.", file=sys.stderr)
         return
 
+    selected = fields.get("入选题库？")
+    if not selected:
+        print(f"  [SKIP] '入选题库？' 未勾选，跳过发布", file=sys.stderr)
+        return
+
+    rewritten = fields.get("仿写完成？")
+    if not rewritten:
+        print(f"  [SKIP] '仿写完成？' 未勾选，跳过发布", file=sys.stderr)
+        return
+
     title = str(fields.get("仿写标题.输出结果", "")).strip()
     desc = str(fields.get("仿写正文.输出结果", "")).strip()
     tags_str = str(fields.get("标签", "")).strip()
