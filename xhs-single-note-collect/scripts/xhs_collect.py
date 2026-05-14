@@ -27,7 +27,6 @@ import re
 import shutil
 import subprocess
 import sys
-import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -58,7 +57,6 @@ def _larkcli_cmd(*args: str) -> list:
         ps1 = shutil.which("lark-cli")
         if not ps1:
             candidates = [
-                Path(os.environ.get("SCOOP", r"C:\Users\14541\scoop")) / "apps" / "nodejs" / "current" / "bin" / "lark-cli.ps1",
                 Path.home() / "scoop" / "apps" / "nodejs" / "current" / "bin" / "lark-cli.ps1",
                 Path.home() / "AppData" / "Roaming" / "npm" / "lark-cli.ps1",
             ]
@@ -183,11 +181,6 @@ def _count_attachments(fields: dict, field_name: str) -> int:
     if s in ("", "[]", "null", "None"):
         return 0
     return 1
-
-
-def _field_has_value(fields: dict, field_name: str) -> bool:
-    value = str(fields.get(field_name, "")).strip()
-    return value not in ("", "[]", "null", "None")
 
 
 def _get_record_url(base_token: str, table_id: str, record_id: str) -> str:
@@ -640,7 +633,6 @@ def main():
     # ── Pre-step: interactive prompt if required params missing ──
     has_cli_args = args.base_token and args.table_id and args.view_id and args.rows
     has_url = bool(args.feishu_url)
-    has_cookies = bool(args.cookies_str or args.cookies_file)
 
     if not has_cli_args and not has_url:
         print("[PRE-STEP] 缺少必要参数，进入交互模式...", file=sys.stderr)

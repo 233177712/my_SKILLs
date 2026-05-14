@@ -9,7 +9,7 @@ description: "采集小红书单条笔记的全链路数据（正文、媒体、
 
 ## ⏱ 耗时预估
 
-脚本含 6 个阶段，耗时大头在 API 速率限制。以下是 **N 条不重复笔记** 的参考耗时：
+脚本含 4 个阶段，耗时大头在 API 速率限制。以下是 **N 条不重复笔记** 的参考耗时：
 
 | 阶段 | 单条耗时 | N 条合计 | 说明 |
 |------|----------|----------|------|
@@ -57,7 +57,7 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py
 2. 飞书表格链接（如 `https://my.feishu.cn/base/TOKEN?table=TBL&view=VIEW`）
 3. 行号（逗号分隔，如 `26,27,28`）
 
-确认后自动执行全部 6 步。
+确认后自动执行全部步骤。
 
 ### 方式 B：命令行传参（适合重复运行）
 
@@ -156,130 +156,6 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py `
 
 ---
 
-## 手工工作流（备选）
-
-当脚本不可用或需要调试时，按以下 6 步操作。
-
-### 前置条件
-
-```powershell
-# 检查 Python 依赖（已安装则跳过）
-pip show requests loguru 2>$null
-if ($LASTEXITCODE -ne 0) { pip install -r skills/xhs-apis/scripts/requirements.txt }
-
-# 检查 Node 依赖（已安装则跳过）
-if (-not (Test-Path skills/xhs-apis/scripts/node_modules)) {
-    Push-Location skills/xhs-apis/scripts; npm install; Pop-Location
-}
-
-lark-cli auth login --domain base
-```
-
-### Step 1: 探查字段结构
-
-```powershell
-lark-cli base +field-list --base-token <BASE_TOKEN> --table-id <TABLE_ID> --as user
-```
-
-如缺少字段（如「正文」）：
-```powershell
-lark-cli base +field-create --base-token <BASE_TOKEN> --table-id <TABLE_ID> --json '{"name":"正文","type":"text","style":{"type":"plain"}}' --as user
-```
-
-### Step 2: 读取笔记链接
-
-先获取记录列表确定 record_id：
-```powershell
-# 注意：输出可能被截断，用 Out-File 保存到文件再查看
-lark-cli base +record-list --base-token <BASE_TOKEN> --table-id <TABLE_ID> --view-id <VIEW_ID> --limit 200 --as user 2>&1 | Out-File -Encoding UTF8 records.txt -Width 9999
-```
-
-再取具体行的链接：
-```powershell
-lark-cli base +record-get --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --as user 2>&1 | Out-File -Encoding UTF8 record.txt -Width 9999
-```
-
-### Step 3: 采集笔记信息
-
-```powershell
-cd skills/xhs-apis/scripts
-
-# 写 payload（避免 PowerShell 分号转义）
-@'
-{"url": "<NOTE_URL>", "cookies_str": "<COOKIES>"}
-'@ | Set-Content -Encoding UTF8 payload.json
-
-# 调用 API（注意 110-130s 速率限制等待）
-python xhs_api_tool.py call pc get_note_info --params-file payload.json --out note_info.json
-
-# 提取数据（Python 避免 GBK 乱码）
-python -c "
-import json
-d=json.load(open('note_info.json','r',encoding='utf-8'))
-i=d['result'][2]['data']['items'][0]['note_card']
-print('nickname:', i['user']['nickname'])
-print('desc:', i['desc'])
-print('liked:', i['interact_info']['liked_count'])
-print('collected:', i['interact_info']['collected_count'])
-print('comments:', i['interact_info']['comment_count'])
-print('shares:', i['interact_info']['share_count'])
-print('user_id:', i['user']['user_id'])
-print('time:', i['time'])
-"
-```
-
-### Step 4: 采集博主信息
-
-```powershell
-python xhs_api_tool.py call pc get_user_info --params '{"user_id":"<USER_ID>","cookies_str":"<COOKIES>"}' --out user_info.json
-
-python -c "
-import json
-d=json.load(open('user_info.json','r',encoding='utf-8'))
-its=d['result'][2]['data']['interactions']
-for i in its: print(i['type'], i['count'])
-"
-```
-
-### Step 5: 采集评论
-
-```powershell
-python xhs_api_tool.py call pc get_note_all_comment --params-file payload.json --out comments.json
-```
-
-### Step 6: 下载媒体 → 上传 → 回写
-
-```powershell
-# 下载（用 curl）
-curl -L -o cover.jpg "<COVER_URL>"
-
-# 上传附件
-Set-Location <DOWNLOAD_DIR>
-lark-cli base +record-upload-attachment --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --field-id "图片附件" --file ./cover.jpg --as user
-lark-cli base +record-upload-attachment --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --field-id "正文图" --file ./body.jpg --as user
-lark-cli base +record-upload-attachment --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --field-id "视频附件" --file ./video.mp4 --as user
-
-# 回写字段
-lark-cli base +record-upsert --base-token <BASE_TOKEN> --table-id <TABLE_ID> --record-id <RECORD_ID> --as user --json '{
-  "作者名":"<VALUE>",
-  "标题":"<VALUE>",
-  "正文":"<VALUE>",
-  "标签":"<VALUE>",
-  "点赞数":<NUMBER>,
-  "评论数":<NUMBER>,
-  "分享数":<NUMBER>,
-  "收藏数":<NUMBER>,
-  "发布时间":"YYYY-MM-DD HH:mm:ss",
-  "提取时间":"YYYY-MM-DD HH:mm:ss",
-  "粉丝":<NUMBER>,
-  "获赞与收藏":<NUMBER>,
-  "图片链接":"<URL>",
-  "视频链接":"<URL or empty>"
-}'
-```
-
----
-
 ## 坑点清单
 
 | # | 坑 | 现象 | 规避 |
@@ -333,10 +209,3 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py `
 ```
 
 编排脚本会额外调用 `get_note_no_water_video` 获取下载链接并上传。
-
-手工额外步骤：
-```powershell
-python xhs_api_tool.py call pc get_note_no_water_video --params '{"note_id":"<NOTE_ID>"}'
-curl -L -o note_video.mp4 "<VIDEO_URL>"
-lark-cli base +record-upload-attachment --base-token <TOKEN> --table-id <TBL> --record-id <REC> --field-id "视频附件" --file ./note_video.mp4 --as user
-```
