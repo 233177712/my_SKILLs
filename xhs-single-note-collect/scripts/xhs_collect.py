@@ -74,18 +74,8 @@ def _larkcli_cmd(*args: str) -> list:
     return ["lark-cli"] + list(args)
 
 
-def _larkcli(*args: str) -> str:
-    cmd = _larkcli_cmd(*args)
-    proc = _run(cmd)
-    if proc.returncode != 0:
-        print(f"[ERROR] lark-cli failed: {' '.join(cmd)}", file=sys.stderr)
-        print(proc.stderr, file=sys.stderr)
-        raise SystemExit(1)
-    return _strip_ansi(proc.stdout + proc.stderr)
-
-
 def _larkcli_json(*args: str) -> dict:
-    cmd = _larkcli_cmd(*args, "--format", "json")
+    cmd = _larkcli_cmd(*args, "--jq", ".")
     proc = _run(cmd)
     if proc.returncode != 0:
         print(f"[ERROR] lark-cli failed: {' '.join(cmd)}", file=sys.stderr)
@@ -99,22 +89,13 @@ def _larkcli_json(*args: str) -> dict:
 
 
 def _get_field_list(base_token: str, table_id: str) -> list:
-    cmd = _larkcli_cmd("base", "+field-list",
-                        "--base-token", base_token,
-                        "--table-id", table_id,
-                        "--limit", "200",
-                        "--as", "user",
-                        "--jq", ".")
-    proc = _run(cmd)
-    if proc.returncode != 0:
-        print(f"[ERROR] lark-cli +field-list failed", file=sys.stderr)
-        print(proc.stderr, file=sys.stderr)
-        raise SystemExit(1)
-    try:
-        result = json.loads(_strip_ansi(proc.stdout + proc.stderr))
-    except json.JSONDecodeError as e:
-        print(f"[ERROR] JSON decode failed: {e}", file=sys.stderr)
-        raise SystemExit(1)
+    result = _larkcli_json(
+        "base", "+field-list",
+        "--base-token", base_token,
+        "--table-id", table_id,
+        "--limit", "200",
+        "--as", "user",
+    )
     return result.get("data", {}).get("fields", [])
 
 
