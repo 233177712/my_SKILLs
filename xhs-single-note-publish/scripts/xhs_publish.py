@@ -36,6 +36,13 @@ CACHE_DIR = WORK_DIR / ".xhs_cache"
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+CODEX_IMAGEGEN_PROMPT = (
+    '生成一张小红书笔记封面图，参考这张图的视觉风格。'
+    '主题：{title}。'
+    '要求：构图饱满，主体清晰突出，色彩和谐有质感，'
+    '画面现代高级，在移动端信息流中具有视觉吸引力。'
+)
+
 
 def _strip_ansi(text: str) -> str:
     return re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
@@ -142,6 +149,32 @@ def _download_attachment(file_token: str, name: str, output_dir: Path) -> Path |
     if output_path.exists() and output_path.stat().st_size > 0:
         return output_path
     return None
+
+
+def _upload_attachment(base_token: str, table_id: str, record_id: str,
+                       field_name: str, file_path: Path) -> bool:
+    field_id = _get_field_id(field_name)
+    proc = _run(
+        _larkcli_cmd("base", "+record-upload-attachment",
+         "--base-token", base_token,
+         "--table-id", table_id,
+         "--record-id", record_id,
+         "--field-id", field_id,
+         "--file", file_path.name,
+         "--as", "user"),
+        cwd=file_path.parent,
+    )
+    if proc.returncode != 0:
+        stderr = proc.stderr or ""
+        if "MOBILE_ONLY" in stderr or "仅可通过移动端拍摄上传" in stderr:
+            print(f"[ERROR] Field '{field_name}' ({field_id}) is MOBILE_ONLY", file=sys.stderr)
+            print(f"        Please toggle off this setting in Feishu UI:", file=sys.stderr)
+            print(f"        Field Settings > Advanced > Remove '仅可通过移动端拍摄上传'", file=sys.stderr)
+        else:
+            print(f"[WARN] Upload failed for {record_id} field {field_name}", file=sys.stderr)
+            print(stderr, file=sys.stderr)
+        return False
+    return True
 
 
 def _resolve_cookies(args) -> str:
@@ -265,9 +298,6 @@ def main():
     if not desc:
         print("[ERROR] '仿写正文.输出结果' 为空，无法发布", file=sys.stderr)
         raise SystemExit(1)
-    if not cover_attachments or (isinstance(cover_attachments, list) and len(cover_attachments) == 0):
-        print("[ERROR] '仿写封面' 字段无附件，无法发布", file=sys.stderr)
-        raise SystemExit(1)
 
     tags = [t.strip() for t in tags_str.split(",") if t.strip()]
 
@@ -275,12 +305,72 @@ def main():
     print(f"  → desc: {desc[:50]}...", file=sys.stderr)
     print(f"  → tags: {tags}", file=sys.stderr)
 
-    print("[2/4] Downloading cover image...", file=sys.stderr)
-    cover_token = cover_attachments[0]["file_token"]
-    cover_name = cover_attachments[0].get("name", "cover.jpg")
+    print("[2/4] Preparing cover image...", file=sys.stderr)
     media_dir = CACHE_DIR / f"publish_{uuid.uuid4().hex[:8]}"
     media_dir.mkdir(parents=True, exist_ok=True)
 
+    if not cover_attachments or (isinstance(cover_attachments, list) and len(cover_attachments) == 0):
+        if args.dry_run:
+            print(f"  → [DRY-RUN] 仿写封面为空，从 图片附件 取原封面", file=sys.stderr)
+            original_cover = fields.get("图片附件")
+            if original_cover and (isinstance(original_cover, list) and len(original_cover) > 0):
+                cover_attachments = original_cover
+            else:
+                print("[ERROR] '图片附件' 也无附件，无法生成封面", file=sys.stderr)
+                raise SystemExit(1)
+        else:
+            print(f"  → 仿写封面为空，开始 codex 生图...", file=sys.stderr)
+
+            original_cover = fields.get("图片附件")
+            if not original_cover or (isinstance(original_cover, list) and len(original_cover) == 0):
+                print("[ERROR] '图片附件' 字段无附件，无法生成封面", file=sys.stderr)
+                raise SystemExit(1)
+
+            ref_path = _download_attachment(original_cover[0]["file_token"],
+                                            original_cover[0].get("name", "ref.jpg"),
+                                            media_dir)
+            if not ref_path:
+                print("[ERROR] 原封面下载失败", file=sys.stderr)
+                raise SystemExit(1)
+            print(f"  → Downloaded reference: {ref_path.name}", file=sys.stderr)
+
+            output_path = media_dir / "generated_cover.png"
+            prompt_text = f"{CODEX_IMAGEGEN_PROMPT.format(title=title)}，保存为 ./generated_cover.png"
+
+            print(f"  → Running codex exec...", file=sys.stderr)
+            codex_proc = _run(
+                ["codex", "exec",
+                 "-i", str(ref_path.resolve()),
+                 "--cd", str(media_dir.resolve()),
+                 "--sandbox", "workspace-write",
+                 "--full-auto",
+                 f"$imagegen {prompt_text}"],
+                timeout=120,
+            )
+
+            if codex_proc.returncode != 0 or not output_path.exists():
+                print(f"[ERROR] codex exec failed", file=sys.stderr)
+                if codex_proc.stderr:
+                    print(codex_proc.stderr, file=sys.stderr)
+                raise SystemExit(1)
+            print(f"  → Generated: {output_path.name}", file=sys.stderr)
+
+            if not _upload_attachment(args.base_token, args.table_id, record_id,
+                                       "仿写封面", output_path):
+                print("[ERROR] 仿写封面上传失败", file=sys.stderr)
+                raise SystemExit(1)
+            print(f"  → Uploaded to 仿写封面", file=sys.stderr)
+
+            fields = _get_record_fields(args.base_token, args.table_id, record_id)
+            cover_attachments = fields.get("仿写封面")
+            if not cover_attachments or (isinstance(cover_attachments, list) and len(cover_attachments) == 0):
+                print("[ERROR] 仿写封面上传后读取仍为空", file=sys.stderr)
+                raise SystemExit(1)
+    else:
+        print(f"  → 仿写封面已存在，跳过生图", file=sys.stderr)
+
+    cover_token = cover_attachments[0]["file_token"]
+    cover_name = cover_attachments[0].get("name", "cover.jpg")
     cover_path = _download_attachment(cover_token, cover_name, media_dir)
     if not cover_path:
         print("[ERROR] Failed to download cover image", file=sys.stderr)
