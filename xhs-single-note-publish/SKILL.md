@@ -1,18 +1,18 @@
 ---
 name: "xhs-single-note-publish"
-description: "从飞书多维表格读取待发布笔记（仿写标题、仿写正文、仿写封面、标签），下载封面附件，调用小红书创作者平台 post_note API 发布，并回写发布状态与发布时间。"
+description: "从飞书多维表格读取待发布笔记（仿写标题、仿写正文、仿写封面、标签），优先使用仿写封面；为空时基于原图片附件调用 Codex CLI 以图生图仿写封面并回填，再调用小红书创作者平台 post_note API 发布，并回写发布状态与发布时间。"
 ---
 
 # 小红书单条笔记发布
 
-> 一条命令链完成「读飞书 → 下载封面 → 发布 → 回写」闭环。
+> 一条命令链完成「读飞书 → 取/生封面 → 发布 → 回写」闭环。
 
 ## ⏱ 耗时预估
 
 | 阶段 | 耗时 | 说明 |
 |------|------|------|
 | 字段映射 + 读取行 | ~3-5s | lark-cli API |
-| 下载仿写封面 | ~2-5s | 附件下载速度 |
+| 下载/生成仿写封面 | ~2-30s | 有仿写封面时直接下载；为空时走 Codex CLI 以图生图并回填 |
 | 调用 creator.post_note | ~10-30s | 包含媒体上传 + 签名 + 发布 |
 | 回写状态 | ~1-2s | lark-cli API |
 
@@ -82,7 +82,7 @@ python skills/xhs-single-note-publish/scripts/xhs_publish.py `
 ```
 [0/4] 初始化字段 ID 映射    +field-list --jq .
 [1/4] 读取目标行，校验状态  +record-get --format json
-[2/4] 下载仿写封面           docs +media-download
+[2/4] 准备仿写封面           直接下载 / Codex CLI 生成 + 回填
 [3/4] 发布 + 更新状态         creator.post_note → +record-upsert
 ```
 
@@ -90,9 +90,9 @@ python skills/xhs-single-note-publish/scripts/xhs_publish.py `
 
 | 用途 | Base 字段 | 类型 | 必填 | 说明 |
 |------|-----------|------|------|------|
-| 标题 | `仿写标题.输出结果` | text | 是 | 空时报错 |
+| 标题 | `仿写标题` | text | 是 | 空时报错 |
 | 正文 | `仿写正文.输出结果` | text | 是 | 空时报错 |
-| 封面 | `仿写封面` | attachment | 是 | 空时报错；取第一个附件作为 images[0] |
+| 封面 | `仿写封面` | attachment | 是 | 优先使用；为空时自动读取 `图片附件` 的第一个附件，调用 Codex CLI 生成后回填，再取生成结果作为 images[0] |
 | 话题 | `标签` | text | 否 | 逗号拆分后传给 `topics` 参数，API 内部自动 `#话题` 格式化 |
 
 ## 状态机
@@ -123,8 +123,9 @@ python skills/xhs-single-note-publish/scripts/xhs_publish.py `
 | # | 坑 | 现象 | 规避 |
 |---|-----|------|------|
 | 1 | cookies 缺少 creator 域 | `post_note` 返回 403/401 | cookies 须包含 `access-token-creator.xiaohongshu.com`、`x-user-id-creator.xiaohongshu.com`、`galaxy_creator_session_id` 等 |
-| 2 | `仿写封面` 字段无附件 | 脚本报错退出 | 确保该行已在飞书 UI 中上传封面 |
-| 3 | `仿写标题.输出结果` 为空 | 脚本报错退出 | 确保仿写完成后再发布 |
-| 4 | `仿写正文.输出结果` 为空 | 脚本报错退出 | 确保仿写完成后再发布 |
-| 5 | lark-cli `docs +media-download` 路径 | 某些环境可能不支持 | 脚本自动使用绝对路径下载 |
-| 6 | post_note 限流/频率限制 | 连续发布失败 | 每次发布间隔 30s 以上 |
+| 2 | `仿写封面` 为空且 `图片附件` 无附件 | 脚本报错退出 | 先确保原笔记封面已经采集到 `图片附件` |
+| 3 | Codex CLI 未安装或未登录 | 无法自动仿写封面 | 先执行 `npm install -g @openai/codex` 并完成 `codex login` |
+| 4 | `仿写标题` 为空 | 脚本报错退出 | 确保仿写完成后再发布 |
+| 5 | `仿写正文.输出结果` 为空 | 脚本报错退出 | 确保仿写完成后再发布 |
+| 6 | lark-cli `docs +media-download` 路径 | 某些环境可能不支持 | 脚本自动使用绝对路径下载 |
+| 7 | post_note 限流/频率限制 | 连续发布失败 | 每次发布间隔 30s 以上 |
