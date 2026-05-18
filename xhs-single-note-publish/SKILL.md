@@ -49,11 +49,12 @@ python skills/xhs-single-note-publish/scripts/xhs_publish.py `
 | `--feishu-url` | 否 | 飞书表格链接，替代 `--base-token --table-id` |
 | `--row` | 按需 | 行号（按视图顺序），与 `--record-id` 二选一 |
 | `--record-id` | 否 | 直接指定 record_id，替代 `--row` |
-| `--cookies-str` | 按需 | XHS cookies 字符串（需含 creator 域） |
+| `--cookies-str` | 否 | XHS cookies 字符串（需含 creator 域） |
 | `--cookies-file` | 否 | cookies 文本文件路径 |
+| `XHS_COOKIE` | 否 | 环境变量，`--cookies-str` 和 `--cookies-file` 均未提供时读取 |
 | `--dry-run` | 否 | 只构建 payload 并打印，不实际调用 API |
 
-> `--dry-run` 模式下 cookies 可不传。
+> `--dry-run` 模式下 cookies 可不传。非 dry-run 时需通过 `--cookies-str`、`--cookies-file` 或 `XHS_COOKIE` 环境变量之一提供。
 
 ### 使用 cookies 文件
 
@@ -65,6 +66,20 @@ python skills/xhs-single-note-publish/scripts/xhs_publish.py `
   --row 6 `
   --cookies-file cookies.txt
 ```
+
+### 使用环境变量
+
+设置 `XHS_COOKIE` 环境变量后，无需每次传递 cookies：
+
+```powershell
+$env:XHS_COOKIE = "a1=...;web_session=...;access-token-creator.xiaohongshu.com=..."
+
+python skills/xhs-single-note-publish/scripts/xhs_publish.py `
+  --feishu-url "https://my.feishu.cn/base/TOKEN?table=TBL" `
+  --row 6
+```
+
+优先级：`--cookies-str` > `--cookies-file` > `XHS_COOKIE` > 报错
 
 ### 仅构建不发布（dry-run）
 

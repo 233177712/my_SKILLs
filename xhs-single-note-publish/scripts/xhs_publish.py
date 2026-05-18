@@ -19,6 +19,7 @@ Dry-run (print payload only, no API call):
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -320,6 +321,9 @@ def _resolve_cookies(args) -> str:
         if not path.is_absolute():
             path = WORK_DIR / path
         return path.read_text(encoding="utf-8").strip()
+    env_val = os.environ.get("XHS_COOKIE")
+    if env_val:
+        return env_val.strip()
     return ""
 
 
@@ -372,7 +376,7 @@ def main():
 
     cookies = _resolve_cookies(args)
     if not cookies and not args.dry_run:
-        print("[ERROR] 必须提供 cookies (--cookies-str 或 --cookies-file)", file=sys.stderr)
+        print("[ERROR] 必须提供 cookies (--cookies-str / --cookies-file / XHS_COOKIE 环境变量)", file=sys.stderr)
         raise SystemExit(1)
 
     print("[0/4] Initializing field ID map...", file=sys.stderr)
