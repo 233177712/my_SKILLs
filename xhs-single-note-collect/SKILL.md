@@ -40,16 +40,16 @@ description: "采集小红书单条笔记的全链路数据（正文、媒体、
 ```powershell
 # 检查 Python 依赖（已安装则跳过）
 pip show requests loguru 2>$null
-if ($LASTEXITCODE -ne 0) { pip install -r skills/xhs-apis/scripts/requirements.txt }
+if ($LASTEXITCODE -ne 0) { pip install -r ../xhs-apis/scripts/requirements.txt }
 
 # 检查 Node 依赖（已安装则跳过）
-if (-not (Test-Path skills/xhs-apis/scripts/node_modules)) {
-    Push-Location skills/xhs-apis/scripts; npm install; Pop-Location
+if (-not (Test-Path ../xhs-apis/scripts/node_modules)) {
+    Push-Location ../xhs-apis/scripts; npm install; Pop-Location
 }
 
 lark-cli auth login --domain base
 
-python skills/xhs-single-note-collect/scripts/xhs_collect.py
+python scripts/xhs_collect.py
 ```
 
 交互向导会依次要求输入：
@@ -62,7 +62,7 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py
 ### 方式 B：命令行传参（适合重复运行）
 
 ```powershell
-python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+python scripts/xhs_collect.py `
   --base-token <BASE_TOKEN> --table-id <TABLE_ID> --view-id <VIEW_ID> `
   --rows 26,27,28 `
   --cookies-str "<COOKIES>"
@@ -71,7 +71,7 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py `
 或使用 `--feishu-url` 替代三个独立参数：
 
 ```powershell
-python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+python scripts/xhs_collect.py `
   --feishu-url "https://my.feishu.cn/base/TMsGbgncba7qdMsHpxfcO8dSnNf?table=tbltm1ucPvxmwHkA&view=vew5J9vzNJ" `
   --rows 28,29,30 `
   --cookies-str "<COOKIES>"
@@ -111,7 +111,7 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py `
 # 保存 cookies 到文件
 @"abRequestId=...;a1=...;web_session=..."@ | Set-Content -Encoding UTF8 cookies.txt
 
-python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+python scripts/xhs_collect.py `
   --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
   --rows 26,27,28 `
   --cookies-file cookies.txt
@@ -120,7 +120,7 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py `
 ### 仅回写模式（已有缓存时跳过采集）
 
 ```powershell
-python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+python scripts/xhs_collect.py `
   --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
   --rows 26,27,28 `
   --cookies-file cookies.txt `
@@ -131,21 +131,21 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py `
 
 ```powershell
 # 仅回写已有缓存，不碰采集链路
-python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+python scripts/xhs_collect.py `
   --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
   --rows 26,27,28 `
   --cookies-file cookies.txt `
   --writeback-only
 
 # 只跳过笔记信息采集（如补用户信息）
-python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+python scripts/xhs_collect.py `
   --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
   --rows 26,27,28 `
   --cookies-file cookies.txt `
   --skip-note-info
 
 # 只补笔记信息（跳过用户信息采集）
-python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+python scripts/xhs_collect.py `
   --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
   --rows 26,27,28 `
   --cookies-file cookies.txt `
@@ -202,7 +202,7 @@ python skills/xhs-single-note-collect/scripts/xhs_collect.py `
 如果是视频笔记（`type=video`），编排脚本自动处理：
 
 ```powershell
-python skills/xhs-single-note-collect/scripts/xhs_collect.py `
+python scripts/xhs_collect.py `
   --base-token <TOKEN> --table-id <TBL> --view-id <VIEW> `
   --rows 26 `
   --cookies-str "<COOKIES>"
